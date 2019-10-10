@@ -11346,25 +11346,30 @@ namespace detail
 // binary writer //
 ///////////////////
 
-std::vector<uint8_t> hexToBytes(const std::string& input)
+bool hexToBytes(const std::string& input, std::vector<uint8_t> &result)
 {
-    if (input.size() % 2)
+    if (input.size() & 1)
     {
-        throw "Hex string must have even number of letters";
+        return false;
     }
 
     const char* cInput = input.c_str();
     char* out = new char[input.length() / 2];
 
     size_t count;
+    int ret;
     for (count = 0; count < input.length()/2; count++)
     {
-        sscanf(cInput + 2 * count, "%2hhx", out + count);
+        ret = sscanf(cInput + 2 * count, "%2hhx", out + count);
+        if (ret != 2)
+        {
+            return false;
+        }
     }
 
-    std::vector<uint8_t> bytes((uint8_t*)out, (uint8_t*)out + count);
+    result = std::vector<uint8_t>((uint8_t*)out, (uint8_t*)out + count);
     delete[] out;
-    return bytes;
+    return true;
 }
 
 /*!
@@ -11587,10 +11592,11 @@ class binary_writer
                         if ((j.m_value.string->substr(0, 2).compare("0x") == 0) ||
                             (j.m_value.string->substr(0, 2).compare("0X") == 0))
                         {
-                            std::vector<uint8_t> bytesValue = hexToBytes(j.m_value.string->substr(2));
-                            return write_cbor_bytes(bytesValue);
-                            //assert(false);
-                            //throw "KALLE KALLE";
+                            std::vector<uint8_t> bytesValue;
+                            if (hexToBytes(j.m_value.string->substr(2), bytesValue))
+                            {
+                                return write_cbor_bytes(bytesValue);
+                            }
                         }
                     }
                 }
