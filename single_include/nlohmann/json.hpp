@@ -5503,6 +5503,43 @@ class binary_reader
             }
 
             // UTF-8 string (0x00..0x17 bytes follow)
+            case 0x40:
+            case 0x41:
+            case 0x42:
+            case 0x43:
+            case 0x44:
+            case 0x45:
+            case 0x46:
+            case 0x47:
+            case 0x48:
+            case 0x49:
+            case 0x4A:
+            case 0x4B:
+            case 0x4C:
+            case 0x4D:
+            case 0x4E:
+            case 0x4F:
+            case 0x50:
+            case 0x51:
+            case 0x52:
+            case 0x53:
+            case 0x54:
+            case 0x55:
+            case 0x56:
+            case 0x57:
+            case 0x58:
+            case 0x59:
+            case 0x5A:
+            case 0x5B:
+            case 0x5C:
+            case 0x5D:
+            case 0x5E:
+            case 0x5F:
+            {
+                string_t s("0x");
+                return get_cbor_bytes(s) and sax->string(s);
+            }
+
             case 0x60:
             case 0x61:
             case 0x62:
@@ -5536,7 +5573,6 @@ class binary_reader
                 string_t s;
                 return get_cbor_string(s) and sax->string(s);
             }
-
             // array (0x00..0x17 data items follow)
             case 0x80:
             case 0x81:
@@ -5733,6 +5769,108 @@ class binary_reader
 
     @return whether string creation completed
     */
+
+    bool get_bytes(std::size_t len, string_t &result)
+    {
+        char tmp[3];
+        for (std::size_t i = 0; i < len; ++i)
+        {
+            get();
+            if (JSON_HEDLEY_UNLIKELY(not unexpect_eof(input_format_t::cbor, "kalle")))
+            {
+                return false;
+            }
+            snprintf(tmp, 3, "%02x", static_cast<std::uint8_t>(current));
+            result += tmp;
+        }
+        return true;
+    }
+
+    bool get_cbor_bytes(string_t& result)
+    {
+        if (JSON_HEDLEY_UNLIKELY(not unexpect_eof(input_format_t::cbor, "string")))
+        {
+            return false;
+        }
+
+        switch (current)
+        {
+            // UTF-8 string (0x00..0x17 bytes follow)
+            case 0x40:
+            case 0x41:
+            case 0x42:
+            case 0x43:
+            case 0x44:
+            case 0x45:
+            case 0x46:
+            case 0x47:
+            case 0x48:
+            case 0x49:
+            case 0x4A:
+            case 0x4B:
+            case 0x4C:
+            case 0x4D:
+            case 0x4E:
+            case 0x4F:
+            case 0x50:
+            case 0x51:
+            case 0x52:
+            case 0x53:
+            case 0x54:
+            case 0x55:
+            case 0x56:
+            case 0x57:
+            {
+                std::uint8_t len = static_cast<uint8_t>(current) & 0x1Fu;
+                return get_bytes(len, result);
+            }
+
+            case 0x58: // UTF-8 string (one-byte uint8_t for n follows)
+            {
+                std::uint8_t len;
+                return get_number(input_format_t::cbor, len) and get_bytes(len, result);
+            }
+
+            case 0x59: // UTF-8 string (two-byte uint16_t for n follow)
+            {
+                std::uint16_t len;
+                return get_number(input_format_t::cbor, len) and get_bytes(len, result);
+            }
+
+            case 0x5A: // UTF-8 string (four-byte uint32_t for n follow)
+            {
+                std::uint32_t len;
+                return get_number(input_format_t::cbor, len) and get_bytes(len, result);
+            }
+
+            case 0x5B: // UTF-8 string (eight-byte uint64_t for n follow)
+            {
+                std::uint64_t len;
+                return get_number(input_format_t::cbor, len) and get_bytes(len, result);
+            }
+
+            case 0x5F: // UTF-8 string (indefinite length)
+            {
+                while (get() != 0xFF)
+                {
+                    string_t chunk;
+                    if (not get_cbor_bytes(chunk))
+                    {
+                        return false;
+                    }
+                    result.append(chunk);
+                }
+                return true;
+            }
+
+            default:
+            {
+                auto last_token = get_token_string();
+                return sax->parse_error(chars_read, last_token, parse_error::create(113, chars_read, exception_message(input_format_t::cbor, "expected length specification (0x60-0x7B) or indefinite string type (0x7F); last byte: 0x" + last_token, "string")));
+            }
+        }
+    }
+
     bool get_cbor_string(string_t& result)
     {
         if (JSON_HEDLEY_UNLIKELY(not unexpect_eof(input_format_t::cbor, "string")))
@@ -11208,6 +11346,27 @@ namespace detail
 // binary writer //
 ///////////////////
 
+std::vector<uint8_t> hexToBytes(const std::string& input)
+{
+    if (input.size() % 2)
+    {
+        throw "Hex string must have even number of letters";
+    }
+
+    const char* cInput = input.c_str();
+    char* out = new char[input.length() / 2];
+
+    size_t count;
+    for (count = 0; count < input.length()/2; count++)
+    {
+        sscanf(cInput + 2 * count, "%2hhx", out + count);
+    }
+
+    std::vector<uint8_t> bytes((uint8_t*)out, (uint8_t*)out + count);
+    delete[] out;
+    return bytes;
+}
+
 /*!
 @brief serialization to CBOR and MessagePack values
 */
@@ -11251,6 +11410,52 @@ class binary_writer
     /*!
     @param[in] j  JSON value to serialize
     */
+
+    void write_cbor_bytes(std::vector<uint8_t> &bytes)
+    {
+
+        const auto N = bytes.size();
+
+        if (N <= 0x17)
+        {
+            /*
+             *     16 8  4  2  1
+             * 010 0  0  0  0  0
+             *
+             *
+             * 0100 000
+             *
+             */
+            write_number(static_cast<std::uint8_t>(0x60 + N - 32));
+        }
+        else if (N <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            oa->write_character(to_char_type(0x78 - 32));
+            write_number(static_cast<std::uint8_t>(N));
+        }
+        else if (N <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            oa->write_character(to_char_type(0x79 - 32));
+            write_number(static_cast<std::uint16_t>(N));
+        }
+        else if (N <= (std::numeric_limits<std::uint32_t>::max)())
+        {
+            oa->write_character(to_char_type(0x7A - 32));
+            write_number(static_cast<std::uint32_t>(N));
+        }
+        // LCOV_EXCL_START
+        else if (N <= (std::numeric_limits<std::uint64_t>::max)())
+        {
+            oa->write_character(to_char_type(0x7B - 32));
+            write_number(static_cast<std::uint64_t>(N));
+        }
+        // LCOV_EXCL_STOP
+
+        // step 2: write the string
+        oa->write_characters(
+            reinterpret_cast<const CharType*>(&bytes[0]), N);
+    }
+
     void write_cbor(const BasicJsonType& j)
     {
         switch (j.type())
@@ -11374,6 +11579,23 @@ class binary_writer
             {
                 // step 1: write control byte and the string length
                 const auto N = j.m_value.string->size();
+
+                if (N > 2)
+                {
+                    if ((N & 0x01) == 0)
+                    {
+                        if ((j.m_value.string->substr(0, 2).compare("0x") == 0) ||
+                            (j.m_value.string->substr(0, 2).compare("0X") == 0))
+                        {
+                            std::vector<uint8_t> bytesValue = hexToBytes(j.m_value.string->substr(2));
+                            return write_cbor_bytes(bytesValue);
+                            //assert(false);
+                            //throw "KALLE KALLE";
+                        }
+                    }
+                }
+
+
                 if (N <= 0x17)
                 {
                     write_number(static_cast<std::uint8_t>(0x60 + N));
